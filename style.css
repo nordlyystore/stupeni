@@ -347,3 +347,6 @@ textarea{min-height:240px}
 }
 @media (max-width:420px){ .logo span{display:none} }
 @media (prefers-reduced-motion:reduce){ *{transition:none !important;animation-duration:.01s !important} }
+.rvsent{border-top:1px dashed var(--line);margin-top:8px;padding-top:12px;text-align:left}
+.rvsent p{margin:0 0 6px}
+.hardnote{background:color-mix(in srgb,var(--warn) 13%,transparent);color:var(--ink);border-radius:8px;padding:8px 12px;font-size:14px}
