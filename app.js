@@ -1194,7 +1194,7 @@ function renderToday() {
   if (!queue.length) newBody = `<p class="muted small">Очередь пуста. Добавьте слово сами или сохраните его из текста.</p><button class="btn" data-act="nav" data-to="words">${I.plus} Добавить слово</button>`;
   else if (!nl) newBody = `<p class="muted small">Новые слова на сегодня закончились. В очереди ${queue.length} ${plural(queue.length, 'слово', 'слова', 'слов')}.</p>`;
   else newBody = `<p class="tword" lang="en">${esc(nextNew.word)}</p>
-      <p class="muted small">${nextNew.state === 'practice' ? `Продолжить: написано ${nextNew.practice?.items?.length || 0} из 10` : '10 своих предложений с проверкой'}</p>
+      <p class="muted small">${nextNew.state === 'practice' ? `Продолжить: написано ${nextNew.practice?.items?.length || 0} из ${PRACTICE_N}` : `${PRACTICE_N} своих предложения с проверкой`}</p>
       <button class="btn primary" data-act="pr-start" data-id="${nextNew.id}">${nextNew.state === 'practice' ? 'Продолжить' : 'Начать'}</button>
       ${queue.length > 1 ? `<p class="muted small">Дальше в очереди: ${queue.slice(1, 4).map(w => esc(w.word)).join(', ')}${queue.length > 4 ? '…' : ''}</p>` : ''}`;
   const newCard = `<section class="tcard">
@@ -1227,29 +1227,61 @@ function renderReview() {
   const loading = !hasCard(w) && AI.ready() && cardJobs[w.id];
   const opts = r.flipped ? [1, 2, 3, 4].map(g => ({ g, n: FSRS.next(w.fsrs, g) })) : [];
   const names = { 1: 'Снова', 2: 'Трудно', 3: 'Хорошо', 4: 'Легко' };
+  const hard = isHard(w); const wantSent = (hard && !r.sSkip) || r.sOpen;
+  let sent = '';
+  if (r.sRes) sent = `<div class="rvsent"><p class="clabel">Моё предложение</p><p class="ptext" lang="en">${esc(r.sRes.text)}</p>${resultHtml(r.sRes, w.word)}</div>`;
+  else if (wantSent && !r.flipped) sent = `<div class="rvsent">
+      ${hard ? `<p class="hardnote">Это слово пока плохо запоминается. Напишите с ним одно предложение, потом откройте ответ.</p>` : ''}
+      <label class="clabel" for="rv-in">Своё предложение со словом</label>
+      <textarea id="rv-in" class="prin" rows="2" lang="en" spellcheck="false" autocapitalize="sentences" ${r.sChecking ? 'disabled' : ''}>${esc(r.sInput || '')}</textarea>
+      ${r.sErr ? `<p class="small err">${esc(r.sErr)}</p>` : ''}
+      <div class="row">${r.sChecking ? `<span class="small muted"><span class="spinner sm"></span> Проверяю…</span>` : ''}<span class="spacer"></span>
+        <button class="btn ghost sm" data-act="rv-skip">${hard ? 'Пропустить' : 'Не писать'}</button>
+        <button class="btn primary" data-act="rv-check" ${r.sChecking || !AI.ready() ? 'disabled' : ''}>Проверить</button></div>
+    </div>`;
+  const flipBtn = wantSent && !r.sRes ? '' : `<div class="row center">${!r.sOpen && !r.sRes && AI.ready() ? `<button class="btn" data-act="rv-open">${I.pen} Написать предложение</button>` : ''}<button class="btn primary big" id="rv-flip" data-act="rv-flip">Показать ответ</button></div><p class="small muted center keyhint">Пробел или Enter</p>`;
   return `<div class="review">
     <div class="row"><button class="btn ghost sm" data-act="rv-end">${I.back} Закончить</button><span class="spacer"></span><span class="small muted tabnum">Осталось ${r.queue.length} · повторено ${r.done}</span></div>
     <div class="flash card2">
       ${loading ? `<p class="muted small"><span class="spinner sm" aria-hidden="true"></span> Готовлю примеры…</p>` : ''}
       ${cardFrontHtml(w)}
       ${TTS.ok && hasCard(w) ? `<div class="row center"><button class="btn ghost sm" data-act="rv-say">${I.spk} Прослушать примеры</button></div>` : ''}
+      ${sent}
       ${r.flipped ? `<div class="fback">${cardBackHtml(w)}</div>
         <div class="grades">${opts.map(o => `<button class="btn grade g${o.g}" data-act="rv-grade" data-g="${o.g}"><span>${names[o.g]}</span><small class="tabnum">${ivlLabel(o.n.days)}</small></button>`).join('')}</div>
         <p class="small muted center keyhint">Клавиши 1–4</p>`
-      : `<div class="row center"><button class="btn primary big" id="rv-flip" data-act="rv-flip">Показать ответ</button></div><p class="small muted center keyhint">Пробел или Enter</p>`}
+      : flipBtn}
     </div></div>`;
+}
+// a word counts as hard if it was forgotten twice or the last answer was «Снова»/«Трудно»
+function isHard(w) { return (w.fsrs?.lapses || 0) >= 2 || (w.lastGrade && w.lastGrade <= 2); }
+async function checkReviewSentence() {
+  const r = ui.rev; const w = words[r.queue[0]]; const text = (r.sInput || '').trim();
+  if (!w || !text || r.sChecking) return;
+  if (countWords(text) < 3) { r.sErr = 'Напишите полное предложение.'; render(); return; }
+  r.sChecking = true; r.sErr = ''; render();
+  try {
+    const res = cleanCheck(await sampleFn.json(checkPrompt(w, text), {}), text);
+    if (ui.rev !== r || r.queue[0] !== w.id) return;
+    r.sRes = { text, r: res };
+    w.mySentences = [...(w.mySentences || []), { text, corrected: res.corrected, verdict: res.verdict, at: Date.now() }].slice(-40);
+    Store.putWord(w);
+  } catch (e) { r.sErr = claudeError(e); }
+  r.sChecking = false; render();
+  if (r.sRes) document.getElementById('rv-flip')?.focus(); else document.getElementById('rv-in')?.focus();
 }
 function gradeReview(g) {
   const r = ui.rev; const w = words[r.queue[0]]; if (!w) return;
-  w.fsrs = FSRS.next(w.fsrs, g); w.lastReviewDay = dayKey();
+  w.fsrs = FSRS.next(w.fsrs, g); w.lastReviewDay = dayKey(); w.lastGrade = g;
   r.queue.shift();
   if (g === 1) r.queue.push(w.id); else r.done++;
   Store.putWord(w);
-  r.flipped = false; render(); prefetchCards(); updateBadge();
+  Object.assign(r, { flipped: false, sOpen: false, sSkip: false, sRes: null, sInput: '', sErr: '' });
+  render(); prefetchCards(); updateBadge();
 }
 
-/* ===== practice: 10 own sentences ===== */
-const PRACTICE_N = 10;
+/* ===== practice: own sentences ===== */
+const PRACTICE_N = 3;
 function checkPrompt(w, text) {
   return `You are an experienced, encouraging English teacher. A Russian-speaking learner (CEFR ${ui.level}) is practising the word "${w.word}"${w.pos ? ` (${w.pos})` : ''}${w.def ? `, meaning: ${w.def}` : ''}.
 Learner's sentence: """${text}"""
@@ -1282,7 +1314,7 @@ function tokenDiff(a, b) {
   while (j < m) out.push(`<ins>${esc(B[j++])}</ins>`);
   return out.join(' ');
 }
-function resultHtml(it) {
+function resultHtml(it, wordText) {
   const r = it.r; if (!r) return '';
   const v = { correct: ['ok', 'Верно'], minor: ['mid', 'Почти верно'], wrong: ['bad', 'Есть ошибки'] }[r.verdict] || ['mid', 'Проверено'];
   const changed = r.corrected && r.corrected.trim() !== it.text.trim();
@@ -1290,7 +1322,7 @@ function resultHtml(it) {
     <p class="pverdict"><span class="vbadge ${v[0]}">${v[1]}</span>${r.comment_ru ? ` <span class="muted">${esc(r.comment_ru)}</span>` : ''}</p>
     ${changed ? `<p class="clabel">Исправление</p><p class="pfix" lang="en">${tokenDiff(it.text, r.corrected)}</p>` : ''}
     ${r.errors?.length ? `<ul class="perr">${r.errors.map(e => `<li><span lang="en"><del>${esc(e.wrong)}</del> → <ins>${esc(e.right)}</ins></span> <span class="muted">${esc(e.explain_ru)}</span></li>`).join('')}</ul>` : ''}
-    ${!r.word_ok || r.word_note_ru ? `<p class="pword ${r.word_ok ? '' : 'badtxt'}"><b>${esc(words[ui.prac.id]?.word || '')}:</b> ${esc(r.word_note_ru || 'слово употреблено неверно')}</p>` : ''}
+    ${!r.word_ok || r.word_note_ru ? `<p class="pword ${r.word_ok ? '' : 'badtxt'}"><b>${esc(wordText || '')}:</b> ${esc(r.word_note_ru || 'слово употреблено неверно')}</p>` : ''}
     ${r.natural && r.natural.trim() !== (r.corrected || it.text).trim() ? `<p class="clabel">Как сказал бы носитель</p><p class="pnat" lang="en">${esc(r.natural)}</p>` : ''}
   </div>`;
 }
@@ -1306,14 +1338,14 @@ function renderPractice() {
       ${w.def ? `<p class="cdef" lang="en">${esc(w.def)}</p>` : (cardJobs[w.id] ? `<p class="muted small"><span class="spinner sm"></span> Готовлю карточку…</p>` : '')}
       ${p.showCard && hasCard(w) ? `<div class="pcard">${cardFrontHtml(w)}${w.collocations?.length ? `<p class="clabel">Collocations</p><ul class="coll" lang="en">${w.collocations.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}${w.synonyms?.length ? `<p class="clabel">Synonyms</p><div class="syn" lang="en">${w.synonyms.map(x => `<span>${esc(x)}</span>`).join('')}</div>` : ''}</div>` : ''}
     </div>`;
-  const history = items.slice(0, showingResult ? n - 1 : n).map((it, i) => `<details class="phist"><summary><span class="vdot ${({ correct: 'ok', minor: 'mid', wrong: 'bad' }[it.r?.verdict] || 'mid')}"></span><span class="tabnum muted">${i + 1}.</span> <span lang="en">${esc(it.text)}</span></summary>${resultHtml(it)}</details>`).reverse().join('');
+  const history = items.slice(0, showingResult ? n - 1 : n).map((it, i) => `<details class="phist"><summary><span class="vdot ${({ correct: 'ok', minor: 'mid', wrong: 'bad' }[it.r?.verdict] || 'mid')}"></span><span class="tabnum muted">${i + 1}.</span> <span lang="en">${esc(it.text)}</span></summary>${resultHtml(it, w.word)}</details>`).reverse().join('');
   let main;
   if (n >= PRACTICE_N && !p.redo && !showingResult) {
     const ok = items.filter(it => it.r?.verdict === 'correct').length;
-    main = `<div class="pdone"><p class="eyebrow">Готово</p><h2>10 предложений с «${esc(w.word)}»</h2><p class="muted">Верно сразу: ${ok} из ${n}. ${p.extra ? '' : 'Слово переходит в повторение карточками.'}</p>
+    main = `<div class="pdone"><p class="eyebrow">Готово</p><h2>${PRACTICE_N} предложения с «${esc(w.word)}»</h2><p class="muted">Верно сразу: ${ok} из ${n}. ${p.extra ? '' : 'Слово переходит в повторение карточками.'}</p>
       <div class="row center"><button class="btn primary" data-act="pr-finish">${p.extra ? 'Готово' : 'Завершить'}</button></div></div>`;
   } else if (showingResult) {
-    main = `<div class="pcur"><p class="clabel">Предложение ${n}</p><p class="ptext" lang="en">${esc(last.text)}</p>${resultHtml(last)}
+    main = `<div class="pcur"><p class="clabel">Предложение ${n}</p><p class="ptext" lang="en">${esc(last.text)}</p>${resultHtml(last, w.word)}
       <div class="row">${last.r.verdict !== 'correct' ? `<button class="btn" data-act="pr-redo">Исправить и проверить снова</button>` : ''}<span class="spacer"></span>
       <button class="btn primary" id="pr-next" data-act="pr-next">${n >= PRACTICE_N ? 'К итогам' : 'Следующее предложение'} ${I.next}</button></div></div>`;
   } else {
@@ -1333,19 +1365,21 @@ function renderPractice() {
     ${history ? `<div class="phistory"><p class="clabel">Написанные предложения</p>${history}</div>` : ''}
   </div>`;
 }
+function cleanCheck(r0, text) {
+  return {
+    verdict: ['correct', 'minor', 'wrong'].includes(r0?.verdict) ? r0.verdict : 'minor', word_ok: r0?.word_ok !== false,
+    word_note_ru: String(r0?.word_note_ru || ''), corrected: String(r0?.corrected || text), natural: String(r0?.natural || ''),
+    errors: (Array.isArray(r0?.errors) ? r0.errors : []).filter(e => e && (e.wrong || e.right)).map(e => ({ wrong: String(e.wrong || ''), right: String(e.right || ''), explain_ru: String(e.explain_ru || '') })).slice(0, 8),
+    comment_ru: String(r0?.comment_ru || '')
+  };
+}
 async function checkSentence() {
   const p = ui.prac; const w = words[p.id]; const text = p.input.trim();
   if (!text || p.checking) return;
   if (countWords(text) < 3) { p.err = 'Напишите полное предложение.'; render(); return; }
   p.checking = true; p.err = ''; render();
   try {
-    const r0 = await sampleFn.json(checkPrompt(w, text), {});
-    const r = {
-      verdict: ['correct', 'minor', 'wrong'].includes(r0?.verdict) ? r0.verdict : 'minor', word_ok: r0?.word_ok !== false,
-      word_note_ru: String(r0?.word_note_ru || ''), corrected: String(r0?.corrected || text), natural: String(r0?.natural || ''),
-      errors: (Array.isArray(r0?.errors) ? r0.errors : []).filter(e => e && (e.wrong || e.right)).map(e => ({ wrong: String(e.wrong || ''), right: String(e.right || ''), explain_ru: String(e.explain_ru || '') })).slice(0, 8),
-      comment_ru: String(r0?.comment_ru || '')
-    };
+    const r = cleanCheck(await sampleFn.json(checkPrompt(w, text), {}), text);
     const items = pracItems(); const it = { text, r, at: Date.now() };
     if (p.redo) items[items.length - 1] = it; else items.push(it);
     p.input = ''; p.redo = false; p.justChecked = true;
@@ -1366,7 +1400,7 @@ function finishPractice() {
 /* ===== words list & adding words ===== */
 function wordStatus(w) {
   if (w.state === 'new') return ['q', 'в очереди'];
-  if (w.state === 'practice') return ['p', `предложения ${w.practice?.items?.length || 0}/10`];
+  if (w.state === 'practice') return ['p', `предложения ${w.practice?.items?.length || 0}/${PRACTICE_N}`];
   const d = Math.round((dayStart(w.fsrs?.due || 0) - dayStart()) / DAY);
   return ['r', d <= 0 ? 'повторить сегодня' : `через ${ivlLabel(d)}`];
 }
@@ -1470,7 +1504,7 @@ function renderSettings() {
     <section class="sset">
       <h2>Нагрузка в день</h2>
       <div class="row"><label for="s-new">Новых слов</label><input id="s-new" class="numin" type="number" min="0" max="20" value="${settings.newPerDay}"><label for="s-rev">Повторений</label><input id="s-rev" class="numin" type="number" min="0" max="300" value="${settings.reviewsPerDay}"></div>
-      <p class="small muted">Каждое новое слово — это 10 своих предложений. Повторения сверх лимита переносятся на следующий день. День начинается в 4:00.</p>
+      <p class="small muted">Каждое новое слово — это 3 своих предложения. При повторении трудных слов нужно написать одно предложение, для остальных — по желанию. Повторения сверх лимита переносятся на следующий день. День начинается в 4:00.</p>
     </section>
     <section class="sset">
       <h2>Озвучка</h2>
@@ -1492,10 +1526,7 @@ function renderSettings() {
     </section>
   </div>`;
 }
-function resultHtmlFor(text, r, word) {
-  const saved = ui.prac; ui.prac = { id: wordId(word) };
-  try { return resultHtml({ text, r }); } finally { ui.prac = saved; }
-}
+function resultHtmlFor(text, r, word) { return resultHtml({ text, r }, word); }
 async function runCompare() {
   const c = ui.cmp; const models = c.models.split(',').map(s => s.trim()).filter(Boolean).slice(0, 4);
   if (!c.word.trim() || !c.sent.trim() || !models.length) { toast('Заполните слово, предложение и модели.'); return; }
@@ -1526,6 +1557,9 @@ function wordsAct(name, a) {
   switch (name) {
     case 'rv-start': startReview(); return true;
     case 'rv-flip': if (ui.rev) { ui.rev.flipped = true; render(); } return true;
+    case 'rv-open': ui.rev.sOpen = true; render(); document.getElementById('rv-in')?.focus(); return true;
+    case 'rv-skip': ui.rev.sOpen = false; ui.rev.sSkip = true; render(); return true;
+    case 'rv-check': checkReviewSentence(); return true;
     case 'rv-grade': gradeReview(+a.dataset.g); return true;
     case 'rv-end': ui.rev = null; ui.view = 'today'; render(); return true;
     case 'rv-say': { const w = words[ui.rev?.queue[0]]; if (w?.examples) { TTS.stop(); w.examples.forEach(s => TTS.speak(plainSent(s), { rate: TTS.rate })); } return true; }
@@ -1774,6 +1808,7 @@ document.addEventListener('input', e => {
   } else if (t.id === 'topic') ui.draft.topic = t.value;
   else if (t.id === 'addw-in') ui.addw.q = t.value;
   else if (t.id === 'pr-in' && ui.prac) ui.prac.input = t.value;
+  else if (t.id === 'rv-in' && ui.rev) ui.rev.sInput = t.value;
   else if (t.dataset?.ls) LS.set(t.dataset.ls, t.value.trim());
   else if (t.id === 'c-word') ui.cmp.word = t.value;
   else if (t.id === 'c-sent') ui.cmp.sent = t.value;
@@ -1793,10 +1828,11 @@ document.addEventListener('keydown', e => {
   const t = e.target;
   if (e.key === 'Escape') { hidePop(); return; }
   if (ui.view === 'review' && ui.rev && !['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) {
-    if (!ui.rev.flipped && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); act('rv-flip', t); return; }
+    if (!ui.rev.flipped && (e.key === ' ' || e.key === 'Enter') && document.getElementById('rv-flip')) { e.preventDefault(); act('rv-flip', t); return; }
     if (ui.rev.flipped && /^[1-4]$/.test(e.key)) { e.preventDefault(); act('rv-grade', { dataset: { g: e.key } }); return; }
   }
   if (t.id === 'pr-in' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); checkSentence(); return; }
+  if (t.id === 'rv-in' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); checkReviewSentence(); return; }
   if (e.key === 'Enter' && !e.shiftKey && t.id === 'dict-in') { e.preventDefault(); dictCheck(); return; }
   if (e.key === 'Enter' && t.closest?.('.memline')) {
     e.preventDefault();
