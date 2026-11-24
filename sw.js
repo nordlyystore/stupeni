@@ -1,6 +1,6 @@
 // App shell cache: the app opens offline; API and GitHub requests always go to the network.
-const CACHE = 'stupeni-v2';
-const SHELL = ['./', 'index.html', 'style.css?v=2', 'app.js?v=2', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+const CACHE = 'stupeni-v3';
+const SHELL = ['./', 'index.html', 'style.css?v=3', 'app.js?v=3', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
