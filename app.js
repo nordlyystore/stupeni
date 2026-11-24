@@ -1288,7 +1288,7 @@ async function checkReviewSentence() {
     const res = cleanCheck(await sampleFn.json(checkPrompt(w, text), {}), text);
     if (ui.rev !== r || r.queue[0] !== w.id) return;
     r.sRes = { text, r: res };
-    w.mySentences = [...(w.mySentences || []), { text, corrected: res.corrected, verdict: res.verdict, at: Date.now() }].slice(-40);
+    w.mySentences = [...(w.mySentences || []), sentRecord(text, res, Date.now(), 'review')].slice(-40);
     Store.putWord(w);
   } catch (e) { r.sErr = claudeError(e); }
   r.sChecking = false; render();
@@ -1415,7 +1415,7 @@ async function checkSentence() {
 function finishPractice() {
   const p = ui.prac; const w = words[p.id];
   const items = pracItems();
-  w.mySentences = [...(w.mySentences || []), ...items.map(it => ({ text: it.text, corrected: it.r?.corrected || '', verdict: it.r?.verdict || '', at: it.at }))].slice(-40);
+  w.mySentences = [...(w.mySentences || []), ...items.map(it => sentRecord(it.text, it.r, it.at, p.extra ? 'extra' : 'new'))].slice(-40);
   if (!p.extra) { w.state = 'review'; w.fsrs = FSRS.next(null, 3); delete w.practice; }
   Store.putWord(w); ui.prac = null; ui.view = p.extra ? 'words' : 'today'; render(); updateBadge();
   toast(p.extra ? 'Предложения сохранены' : `«${w.word}» добавлено в повторение`);
@@ -1428,11 +1428,67 @@ function wordStatus(w) {
   const d = Math.round((dayStart(w.fsrs?.due || 0) - dayStart()) / DAY);
   return ['r', d <= 0 ? 'повторить сегодня' : `через ${ivlLabel(d)}`];
 }
+// compact copy of a checked sentence, kept in the word's history
+function sentRecord(text, r, at, kind) {
+  return { text, corrected: r?.corrected || '', verdict: r?.verdict || '', at: at || Date.now(), kind,
+    errors: (r?.errors || []).slice(0, 6), natural: r?.natural || '', note: r && (!r.word_ok || r.word_note_ru) ? (r.word_note_ru || 'слово употреблено неверно') : '' };
+}
+function wordsTabs() {
+  return `<span class="seg big" role="tablist" aria-label="Раздел">
+    <button data-act="w-tab" data-t="words" aria-pressed="${ui.wtab !== 'history'}">Слова</button>
+    <button data-act="w-tab" data-t="history" aria-pressed="${ui.wtab === 'history'}">Мои предложения</button></span>`;
+}
+function allSentences() {
+  const out = [];
+  for (const w of liveWords()) {
+    for (const x of w.mySentences || []) out.push({ ...x, word: w.word, wid: w.id });
+    for (const it of w.practice?.items || []) out.push({ ...sentRecord(it.text, it.r, it.at, 'new'), word: w.word, wid: w.id });
+  }
+  return out.sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+function dayLabel(t) {
+  const k = dayKey(t); if (k === dayKey()) return 'Сегодня'; if (k === dayKey(Date.now() - DAY)) return 'Вчера';
+  return new Date(t - DAY_SHIFT).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', weekday: 'short' });
+}
+function renderHistory() {
+  const all = allSentences(); const bad = ui.hfilter === 'bad';
+  const list = bad ? all.filter(x => x.verdict && x.verdict !== 'correct') : all;
+  const vc = v => ({ correct: 'ok', minor: 'mid', wrong: 'bad' }[v] || 'mid');
+  const vt = v => ({ correct: 'Верно', minor: 'Почти верно', wrong: 'Есть ошибки' }[v] || 'Проверено');
+  let lastDay = ''; let html = '';
+  for (const x of list) {
+    const d = dayLabel(x.at); if (d !== lastDay) { html += `<p class="hday">${esc(d)}</p>`; lastDay = d; }
+    const changed = x.corrected && x.corrected.trim() !== x.text.trim();
+    const more = x.errors?.length || x.natural || x.note;
+    html += `<details class="hrow ${vc(x.verdict)}"${more ? '' : ' data-empty'}>
+      <summary><span class="vdot ${vc(x.verdict)}" title="${vt(x.verdict)}"></span>
+        <span class="hbody"><span class="hword">${esc(x.word)}</span><span class="htext" lang="en">${esc(x.text)}</span>
+        ${changed ? `<span class="hfix" lang="en">${tokenDiff(x.text, x.corrected)}</span>` : ''}</span>
+        <span class="htime tabnum">${new Date(x.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span></summary>
+      ${more ? `<div class="hmore">
+        ${x.errors?.length ? `<ul class="perr">${x.errors.map(e => `<li><span lang="en"><del>${esc(e.wrong)}</del> → <ins>${esc(e.right)}</ins></span> <span class="muted">${esc(e.explain_ru)}</span></li>`).join('')}</ul>` : ''}
+        ${x.note ? `<p class="pword"><b>${esc(x.word)}:</b> ${esc(x.note)}</p>` : ''}
+        ${x.natural && x.natural.trim() !== (x.corrected || x.text).trim() ? `<p class="clabel">Как сказал бы носитель</p><p class="pnat" lang="en">${esc(x.natural)}</p>` : ''}
+      </div>` : ''}
+    </details>`;
+  }
+  const nBad = all.filter(x => x.verdict && x.verdict !== 'correct').length;
+  return `<div class="wordsview">
+    <p class="eyebrow">Личный словарь</p>
+    <h1>Мои предложения</h1>
+    ${wordsTabs()}
+    <p class="lede">${all.length ? `${all.length} ${plural(all.length, 'предложение', 'предложения', 'предложений')} · с ошибками ${nBad}` : 'Здесь появятся предложения, которые вы напишете для новых слов и при повторении.'}</p>
+    ${all.length ? `<div class="filters" role="group" aria-label="Фильтр"><button class="chip" data-act="h-filter" data-f="all" aria-pressed="${!bad}">Все</button><button class="chip" data-act="h-filter" data-f="bad" aria-pressed="${bad}">С ошибками</button></div>` : ''}
+    <div class="hlist">${html || (all.length ? '<p class="muted">Предложений с ошибками нет.</p>' : '')}</div>
+  </div>`;
+}
 function renderWords() {
+  if (ui.wtab === 'history') return renderHistory();
   const list = liveWords().sort((a, b) => (b.added || 0) - (a.added || 0));
   return `<div class="wordsview">
     <p class="eyebrow">Личный словарь</p>
     <h1>Мои слова</h1>
+    ${wordsTabs()}
     <p class="lede">${list.length ? `${list.length} ${plural(list.length, 'слово', 'слова', 'слов')} · в очереди новых: ${newQueue().length}` : 'Добавьте слово ниже или сохраните его из текста, нажав на него.'}</p>
     ${renderAddWord()}
     <div class="wlist">${list.map(w => {
@@ -1621,6 +1677,8 @@ function wordsAct(name, a) {
       return true;
     }
     case 'c-run': runCompare(); return true;
+    case 'w-tab': ui.wtab = a.dataset.t; render(); return true;
+    case 'h-filter': ui.hfilter = a.dataset.f; render(); return true;
     case 'exp': exportData(); return true;
   }
   return false;
