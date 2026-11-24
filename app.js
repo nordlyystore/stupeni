@@ -473,7 +473,7 @@ const Sync = {
   get path() { return LS.get('stupeni.gh.path', 'stupeni-data.json') || 'stupeni-data.json'; },
   ready() { return !!(this.token && /^[^/\s]+\/[^/\s]+$/.test(this.repo)); },
   busy: false, last: LS.get('stupeni.gh.last', 0), err: '', timer: null, again: false,
-  soon(ms = 15000) { if (!this.ready()) return; clearTimeout(this.timer); this.timer = setTimeout(() => this.run(), ms); },
+  soon(ms = 4000) { if (!this.ready()) return; clearTimeout(this.timer); this.timer = setTimeout(() => this.run(), ms); },
   headers() { return { Authorization: 'Bearer ' + this.token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }; },
   url() { return `https://api.github.com/repos/${this.repo}/contents/${this.path.split('/').map(encodeURIComponent).join('/')}`; },
   async fetchRemote() {
@@ -498,7 +498,7 @@ const Sync = {
   async run() {
     if (!this.ready()) return false;
     if (this.busy) { this.again = true; return false; }
-    this.busy = true; this.err = ''; paintSync();
+    this.busy = true; this.err = ''; this.lastPull = Date.now(); paintSync();
     try {
       for (let attempt = 0; attempt < 3; attempt++) {
         const { data, sha } = await this.fetchRemote();
@@ -509,9 +509,12 @@ const Sync = {
           for (const id in rm) {
             const r = rm[id]; const l = map[id];
             if (!l || (r.updatedAt || 0) > (l.updatedAt || 0)) {
-              const merged = kind === 'stories' && l?.gloss ? { ...r, gloss: l.gloss } : r;
+              const merged = kind === 'stories' && l?.gloss ? { ...r, gloss: l.gloss } : clone(r);
+              if (kind === 'words' && l && !l.deleted && !merged.deleted) keepSentences(merged, l);
               map[id] = kind === 'words' ? normalizeWord(clone(merged)) : clone(merged);
               await Store.raw(kind, map[id]); changedLocal = true;
+            } else if (kind === 'words' && l && !l.deleted && !r.deleted && keepSentences(l, r)) {
+              await Store.raw(kind, l); // local copy is newer, but the other device wrote sentences too
             }
           }
         }
@@ -547,7 +550,28 @@ function syncStateHtml() {
   if (Sync.err) return `<span class="err">${esc(Sync.err)}</span>`;
   return Sync.last ? `Синхронизировано ${new Date(Sync.last).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : 'Ещё не синхронизировалось';
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && Sync.timer) { clearTimeout(Sync.timer); Sync.timer = null; Sync.run(); } });
+// sentences written on both devices are never lost: union by time + text
+function unionSent(a = [], b = [], cap = 40) {
+  const seen = new Map(); for (const x of [...a, ...b]) if (x && x.text) seen.set((x.at || 0) + '|' + x.text, x);
+  return [...seen.values()].sort((x, y) => (x.at || 0) - (y.at || 0)).slice(-cap);
+}
+function keepSentences(into, other) {
+  let changed = false;
+  if (other.mySentences?.length) { const u = unionSent(into.mySentences, other.mySentences); if (u.length !== (into.mySentences || []).length) { into.mySentences = u; changed = true; } }
+  if (into.state === 'practice' && other.state === 'practice' && other.practice?.items?.length) {
+    const u = unionSent(into.practice?.items, other.practice.items, PRACTICE_N);
+    if (u.length !== (into.practice?.items || []).length) { into.practice = { ...(into.practice || {}), items: u }; changed = true; }
+  }
+  return changed;
+}
+// pull fresh data whenever the app comes back to the screen, and every 2 minutes while it is open
+function pullSoon() { if (Sync.ready() && !Sync.busy && Date.now() - (Sync.lastPull || 0) > 20000) Sync.run(); }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { if (Sync.timer) { clearTimeout(Sync.timer); Sync.timer = null; Sync.run(); } }
+  else pullSoon();
+});
+addEventListener('focus', pullSoon); addEventListener('pageshow', pullSoon); addEventListener('online', pullSoon);
+setInterval(() => { if (document.visibilityState === 'visible') pullSoon(); }, 120000);
 
 /* ===== import / export ===== */
 function exportData() {
