@@ -285,7 +285,7 @@ const Store = {
 };
 
 let stories = {}, words = {}, loaded = false;
-let settings = { newPerDay: 3, reviewsPerDay: 30, updatedAt: 0 };
+let settings = { newPerDay: 3, reviewsPerDay: 30, grammarOn: true, topicsOff: [], updatedAt: 0 };
 async function loadAll() {
   const [s, w, st] = await Promise.all([Store.listStories(), Store.listWords(), Store.kvGet('settings', null)]);
   const keepS = stories, keepW = words;
@@ -1138,6 +1138,161 @@ async function startGen() {
   }
 }
 
+/* ===== grammar topics for own sentences ===== */
+// [id, level, English name, Russian name, pattern]
+const TOPICS = [
+  ['pres-simple', 'A1', 'Present Simple', 'Настоящее простое', 'I/you/we/they + V; he/she/it + V-s'],
+  ['pres-cont', 'A1', 'Present Continuous', 'Настоящее длительное', 'am/is/are + V-ing'],
+  ['past-simple', 'A1', 'Past Simple', 'Прошедшее простое', 'V-ed / 2-я форма; did + V в вопросах'],
+  ['future-will', 'A2', 'Future Simple: will', 'Будущее с will', 'will + V'],
+  ['going-to', 'A2', 'be going to', 'Намерения и прогнозы: going to', 'am/is/are going to + V'],
+  ['pres-cont-future', 'A2', 'Present Continuous for arrangements', 'Present Continuous для договорённостей', 'am/is/are + V-ing + время в будущем'],
+  ['past-cont', 'A2', 'Past Continuous', 'Прошедшее длительное', 'was/were + V-ing (when + Past Simple)'],
+  ['pres-perfect', 'A2', 'Present Perfect', 'Настоящее совершенное', 'have/has + V3 (ever, never, already, yet, just)'],
+  ['comparatives', 'A2', 'Comparatives', 'Сравнительная степень', 'adj-er / more + adj + than'],
+  ['superlatives', 'A2', 'Superlatives', 'Превосходная степень', 'the + adj-est / the most + adj'],
+  ['can-could', 'A2', 'can / could / be able to', 'Умение и возможность', 'can/could + V; be able to + V'],
+  ['must-have-to', 'A2', 'must / have to / mustn’t', 'Обязанность и запрет', 'must / have to / don’t have to / mustn’t + V'],
+  ['should-advice', 'A2', 'should / ought to', 'Совет', 'should / ought to + V'],
+  ['quantifiers', 'A2', 'much / many / a lot of / a few / a little', 'Количество', 'much/many/a few/a little + noun'],
+  ['too-enough', 'A2', 'too / enough', 'too и enough', 'too + adj; adj + enough; enough + noun'],
+  ['zero-cond', 'A2', 'Zero Conditional', 'Условные предложения 0 типа', 'If + Present Simple, Present Simple'],
+  ['first-cond', 'B1', 'First Conditional', 'Условные предложения 1 типа', 'If + Present Simple, will + V'],
+  ['second-cond', 'B1', 'Second Conditional', 'Условные предложения 2 типа', 'If + Past Simple, would + V'],
+  ['third-cond', 'B1', 'Third Conditional', 'Условные предложения 3 типа', 'If + Past Perfect, would have + V3'],
+  ['unless', 'B1', 'unless / as long as / provided that', 'Условия: unless, as long as', 'unless / as long as / provided (that) + Present'],
+  ['time-clauses', 'B1', 'Time clauses: when / as soon as / until', 'Придаточные времени о будущем', 'when/as soon as/until/before + Present, will + V'],
+  ['pres-perf-cont', 'B1', 'Present Perfect Continuous', 'Настоящее совершенное длительное', 'have/has been + V-ing (for/since)'],
+  ['past-perfect', 'B1', 'Past Perfect', 'Предпрошедшее время', 'had + V3 (before/after/by the time)'],
+  ['used-to', 'B1', 'used to', 'Привычки в прошлом: used to', 'used to + V / didn’t use to + V'],
+  ['be-used-to', 'B1', 'be / get used to', 'Привыкать: be/get used to', 'be/get used to + V-ing / noun'],
+  ['passive-simple', 'B1', 'Passive: present and past', 'Пассивный залог (Present/Past)', 'am/is/are/was/were + V3 (by …)'],
+  ['passive-perfect-modal', 'B2', 'Passive with perfect tenses and modals', 'Пассив с перфектом и модальными', 'has been / will be / can be / must be + V3'],
+  ['causative', 'B1', 'have / get something done', 'Каузатив: have something done', 'have/get + object + V3'],
+  ['reported-statements', 'B1', 'Reported speech: statements', 'Косвенная речь: утверждения', 'said (that) + сдвиг времени: is → was, will → would'],
+  ['reported-questions', 'B1', 'Reported speech: questions', 'Косвенная речь: вопросы', 'asked if/whether / asked where + прямой порядок слов'],
+  ['reported-commands', 'B1', 'Reported commands and requests', 'Косвенная речь: просьбы и приказы', 'told/asked + someone + (not) to + V'],
+  ['indirect-questions', 'B1', 'Indirect questions', 'Вежливые косвенные вопросы', 'Do you know / Could you tell me + where/if + прямой порядок'],
+  ['question-tags', 'B1', 'Question tags', 'Разделительные вопросы', '…, isn’t it? / …, don’t you? / …, did she?'],
+  ['relative-defining', 'B1', 'Defining relative clauses', 'Определительные придаточные', 'noun + who/which/that + clause'],
+  ['relative-nondefining', 'B2', 'Non-defining relative clauses', 'Неопределительные придаточные', 'noun, who/which + clause, …'],
+  ['relative-whose-where', 'B1', 'whose / where / when', 'Придаточные с whose, where, when', 'noun + whose/where/when + clause'],
+  ['gerund-verbs', 'B1', 'Verb + -ing', 'Глагол + герундий', 'enjoy/avoid/mind/finish + V-ing'],
+  ['infinitive-verbs', 'B1', 'Verb + to-infinitive', 'Глагол + инфинитив', 'decide/hope/plan/refuse + to + V'],
+  ['verb-object-inf', 'B1', 'Verb + object + to-infinitive', 'Хотеть, чтобы кто-то…', 'want/expect/ask/encourage + someone + to + V'],
+  ['gerund-inf-meaning', 'B2', 'remember / stop / try + -ing or to', 'Герундий или инфинитив: разница в смысле', 'remember doing ≠ remember to do; stop/try …'],
+  ['prep-gerund', 'B1', 'Preposition + -ing', 'Предлог + герундий', 'interested in / good at / before / without + V-ing'],
+  ['purpose', 'B1', 'Purpose: to / in order to / so that', 'Цель: чтобы', 'to / in order to + V; so that + subject + can/will'],
+  ['as-as', 'B1', 'as … as / not as … as', 'Сравнение as … as', '(not) as + adj/adv + as'],
+  ['the-more', 'B2', 'the more …, the more …', 'Чем …, тем …', 'the + comparative …, the + comparative …'],
+  ['so-such', 'B1', 'so / such … that', 'Так … что: so / such', 'so + adj / such (a) + adj + noun + that …'],
+  ['both-either', 'B1', 'both / either / neither', 'Оба, любой, ни один', 'both … and / either … or / neither … nor'],
+  ['contrast-although', 'B1', 'although / though / even though', 'Уступка: хотя', 'although + clause, main clause'],
+  ['contrast-despite', 'B2', 'despite / in spite of', 'Несмотря на', 'despite / in spite of + noun / V-ing'],
+  ['contrast-whereas', 'B2', 'whereas / while / however', 'Противопоставление', 'clause, whereas/while + clause; However, …'],
+  ['reason', 'B1', 'because / because of / due to', 'Причина', 'because + clause; because of / due to + noun'],
+  ['future-cont', 'B2', 'Future Continuous', 'Будущее длительное', 'will be + V-ing'],
+  ['future-perfect', 'B2', 'Future Perfect', 'Будущее совершенное', 'will have + V3 (by …)'],
+  ['would-habit', 'B2', 'would for past habits', 'would о привычках в прошлом', 'would + V (повторяющиеся действия в прошлом)'],
+  ['deduction-present', 'B2', 'Deduction: must / might / can’t be', 'Предположения о настоящем', 'must / might / could / can’t + V'],
+  ['deduction-past', 'B2', 'Deduction about the past', 'Предположения о прошлом', 'must / might / can’t + have + V3'],
+  ['should-have', 'B2', 'should have done', 'Сожаление и критика: should have', 'should(n’t) have + V3'],
+  ['neednt-have', 'B2', 'needn’t have / didn’t need to', 'Не нужно было', 'needn’t have + V3 / didn’t need to + V'],
+  ['had-better', 'B2', 'had better', 'Лучше бы (настоятельный совет)', 'had better (not) + V'],
+  ['be-supposed-to', 'B2', 'be supposed to', 'Предполагается, что…', 'am/is/are/was supposed to + V'],
+  ['wish-present', 'B2', 'I wish / If only + Past Simple', 'Сожаление о настоящем', 'I wish / If only + Past Simple (were)'],
+  ['wish-past', 'B2', 'I wish / If only + Past Perfect', 'Сожаление о прошлом', 'I wish / If only + had + V3'],
+  ['wish-would', 'B2', 'I wish … would', 'Недовольство: wish … would', 'I wish + someone + would + V'],
+  ['would-rather', 'B2', 'would rather / it’s time', 'Предпочтение: would rather, it’s time', 'would rather + V / + someone + Past; it’s (high) time + Past'],
+  ['mixed-cond', 'C1', 'Mixed conditionals', 'Смешанные условные', 'If + Past Perfect, would + V / If + Past, would have + V3'],
+  ['participle-clauses', 'B2', 'Participle clauses', 'Причастные обороты', 'V-ing … , / Having + V3, … / V3 …, main clause'],
+  ['cleft', 'C1', 'Cleft sentences', 'Выделительные конструкции', 'It was … that … / What I need is …'],
+  ['inversion', 'C1', 'Inversion after negative adverbs', 'Инверсия', 'Never / Rarely / Not only + auxiliary + subject + V'],
+  ['emphatic-do', 'B2', 'Emphatic do', 'Усилительное do', 'do/does/did + V для усиления'],
+  ['let-make-allow', 'B1', 'make / let / allow', 'Заставлять и разрешать', 'make/let + someone + V; allow + someone + to + V'],
+  ['passive-reporting', 'C1', 'Passive reporting verbs', 'Пассив с глаголами мнения', 'It is said that … / He is believed to + V'],
+  ['subjunctive', 'C1', 'Subjunctive after suggest / insist', 'Сослагательное после suggest, insist', 'suggest/insist/recommend that + someone + V'],
+  ['future-in-past', 'B2', 'Future in the past', 'Будущее в прошедшем', 'was going to + V / would + V'],
+  ['phrasal-verb', 'B1', 'Phrasal verbs', 'Фразовые глаголы', 'verb + particle (look after, give up, put off …)']
+];
+const TOPIC = Object.fromEntries(TOPICS.map(([id, level, en, ru, pattern]) => [id, { id, level, en, ru, pattern }]));
+const enabledTopics = () => TOPICS.map(t => t[0]).filter(id => !(settings.topicsOff || []).includes(id));
+const grammarOn = () => settings.grammarOn !== false && enabledTopics().length > 0;
+function recentTopicIds(n = 12) { return allSentences().filter(x => x.topic).slice(0, n).map(x => x.topic); }
+function topicPrompt(w, cands) {
+  return `A Russian-speaking learner of English (CEFR ${ui.level}) will write one sentence with the word "${w.word}"${w.pos ? ` (${w.pos})` : ''}${w.def ? `, meaning: ${w.def}` : ''}, using a grammar construction.
+Choose ONE topic from this list that combines naturally with this word:
+${cands.map(id => `${id}: ${TOPIC[id].en} (${TOPIC[id].pattern})`).join('\n')}
+Reply with ONLY JSON: {"id":"topic id from the list","tip_ru":"1-2 short sentences in Russian: how to build this construction","example":"one natural example sentence of this construction that does NOT use the word ${w.word}"}`;
+}
+// pick a topic: 8 random candidates (skipping recently used ones), the fast model chooses the one that fits the word
+async function pickTopic(w, holder, exclude = []) {
+  if (!grammarOn()) { holder.topic = null; return; }
+  const recent = new Set([...recentTopicIds(), ...exclude]);
+  let pool = enabledTopics().filter(id => !recent.has(id)); if (pool.length < 4) pool = enabledTopics().filter(id => !exclude.includes(id));
+  if (!pool.length) pool = enabledTopics();
+  const cands = shuffle(pool).slice(0, 8);
+  const token = (holder.topicToken = (holder.topicToken || 0) + 1);
+  holder.topic = { id: cands[0], loading: true };
+  render();
+  let t = { id: cands[0], tip: '', example: '' };
+  if (AI.ready()) {
+    try {
+      const r = await sampleFn.json(topicPrompt(w, cands), { modelTier: 'quick' });
+      if (r && TOPIC[r.id] && cands.includes(r.id)) t = { id: r.id, tip: String(r.tip_ru || ''), example: String(r.example || '') };
+    } catch { }
+  }
+  if (holder.topicToken !== token) return;
+  holder.topic = t; render();
+}
+function topicBoxHtml(holder, act) {
+  const t = holder.topic; if (!t) return '';
+  const d = TOPIC[t.id];
+  if (t.loading) return `<div class="topic"><p class="small muted"><span class="spinner sm"></span> Подбираю грамматическую тему…</p></div>`;
+  return `<div class="topic">
+    <div class="trow"><span class="clabel">Грамматика · ${d.level}</span><button class="btn ghost sm" data-act="${act}">Другая тема</button></div>
+    <p class="tname"><span lang="en">${esc(d.en)}</span> <span class="muted">· ${esc(d.ru)}</span></p>
+    <p class="tpat" lang="en">${esc(d.pattern)}</p>
+    ${t.tip ? `<p class="small">${esc(t.tip)}</p>` : ''}
+    ${t.example ? `<p class="small muted">Пример: <i lang="en">${esc(t.example)}</i></p>` : ''}
+    <p class="small muted">Не получается по теме — напишите любое предложение со словом, и я покажу, как построить его в этой конструкции.</p>
+  </div>`;
+}
+function grammarCheckPart(w, topic) {
+  if (!topic || !TOPIC[topic.id]) return '';
+  const d = TOPIC[topic.id];
+  return `
+The learner was asked to use this grammar construction: "${d.en}" (${d.pattern}).
+Also add to the JSON: "grammar_ok": true if the sentence correctly uses this construction, otherwise false; "grammar_note_ru": one short Russian sentence about how the construction is used, or why it is missing or wrong; "grammar_example": one natural sentence that uses BOTH "${w.word}" and this construction, as close as possible to the learner's idea. Judge "verdict" only by correctness and naturalness, not by whether the construction was used.`;
+}
+function grammarResultHtml(it) {
+  const t = it.topic && TOPIC[it.topic]; const r = it.r || it; if (!t || r.grammar_ok == null) return '';
+  return `<div class="pgram ${r.grammar_ok ? 'ok' : 'bad'}"><p><b>${r.grammar_ok ? '✓' : '✗'} ${esc(t.en)}</b> <span class="muted">· ${r.grammar_ok ? 'конструкция использована' : 'конструкция не использована'}</span></p>
+    ${r.grammar_note_ru || r.grammar_note ? `<p class="small">${esc(r.grammar_note_ru || r.grammar_note)}</p>` : ''}
+    ${!r.grammar_ok && (r.grammar_example) ? `<p class="clabel">Как построить по этой теме</p><p class="pnat" lang="en">${esc(r.grammar_example)}</p>` : ''}</div>`;
+}
+function renderTopicSettings() {
+  const off = new Set(settings.topicsOff || []);
+  const groups = ['A1', 'A2', 'B1', 'B2', 'C1'].map(L => [L, TOPICS.filter(t => t[1] === L)]).filter(g => g[1].length);
+  return `<section class="sset">
+    <h2>Грамматические темы</h2>
+    <p class="small muted">Для каждого предложения модель выбирает из включённых тем ту, что подходит к слову, и старается не повторять недавние.</p>
+    <label class="tgl"><input type="checkbox" id="g-on" ${settings.grammarOn !== false ? 'checked' : ''}> Задавать тему для предложений</label>
+    <div class="row"><button class="btn sm" data-act="tp-all" data-v="1">Включить все</button><button class="btn sm" data-act="tp-all" data-v="0">Выключить все</button><span class="small muted">Включено ${enabledTopics().length} из ${TOPICS.length}</span></div>
+    ${groups.map(([L, ts]) => `<details class="tgroup"><summary><b style="color:var(--${L})">${L}</b> <span class="muted small">${ts.filter(t => !off.has(t[0])).length} из ${ts.length}</span></summary>
+      <div class="tlist">${ts.map(t => `<label class="tgl"><input type="checkbox" data-topic="${t[0]}" ${off.has(t[0]) ? '' : 'checked'}> <span lang="en">${esc(t[2])}</span> <span class="muted small">${esc(t[3])}</span></label>`).join('')}</div></details>`).join('')}
+  </section>`;
+}
+
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.id === 'g-on') { settings.grammarOn = t.checked; saveSettings(); }
+  else if (t.dataset?.topic) {
+    const off = new Set(settings.topicsOff || []); t.checked ? off.delete(t.dataset.topic) : off.add(t.dataset.topic);
+    settings.topicsOff = [...off]; saveSettings();
+  }
+});
+
 /* ===== word cards ===== */
 function cardPrompt(word, { context, def, level } = {}) {
   return `Make a vocabulary flashcard for a Russian-speaking learner of English (CEFR ${level || ui.level}).
@@ -1239,7 +1394,7 @@ function startReview() {
   const q = dueWords().slice(0, reviewsLeft()).map(w => w.id);
   if (!q.length) { toast('Сейчас повторять нечего.'); return; }
   ui.rev = { queue: q, flipped: false, done: 0, loading: false, err: '' };
-  ui.view = 'review'; render(); scrollTo(0, 0); prefetchCards();
+  ui.view = 'review'; render(); scrollTo(0, 0); prefetchCards(); reviewTopic();
 }
 function prefetchCards() {
   if (!ui.rev || !AI.ready()) return;
@@ -1256,6 +1411,7 @@ function renderReview() {
   if (r.sRes) sent = `<div class="rvsent"><p class="clabel">Моё предложение</p><p class="ptext" lang="en">${esc(r.sRes.text)}</p>${resultHtml(r.sRes, w.word)}</div>`;
   else if (wantSent && !r.flipped) sent = `<div class="rvsent">
       ${hard ? `<p class="hardnote">Это слово пока плохо запоминается. Напишите с ним одно предложение, потом откройте ответ.</p>` : ''}
+      ${topicBoxHtml(r, 'rv-topic')}
       <label class="clabel" for="rv-in">Своё предложение со словом</label>
       <textarea id="rv-in" class="prin" rows="2" lang="en" spellcheck="false" autocapitalize="sentences" ${r.sChecking ? 'disabled' : ''}>${esc(r.sInput || '')}</textarea>
       ${r.sErr ? `<p class="small err">${esc(r.sErr)}</p>` : ''}
@@ -1285,14 +1441,21 @@ async function checkReviewSentence() {
   if (countWords(text) < 3) { r.sErr = 'Напишите полное предложение.'; render(); return; }
   r.sChecking = true; r.sErr = ''; render();
   try {
-    const res = cleanCheck(await sampleFn.json(checkPrompt(w, text), {}), text);
+    const topic = r.topic && !r.topic.loading ? r.topic : null;
+    const res = cleanCheck(await sampleFn.json(checkPrompt(w, text, topic), {}), text);
     if (ui.rev !== r || r.queue[0] !== w.id) return;
-    r.sRes = { text, r: res };
-    w.mySentences = [...(w.mySentences || []), sentRecord(text, res, Date.now(), 'review')].slice(-40);
+    r.sRes = { text, r: res, topic: topic?.id };
+    w.mySentences = [...(w.mySentences || []), sentRecord(text, res, Date.now(), 'review', topic?.id)].slice(-40);
     Store.putWord(w);
   } catch (e) { r.sErr = claudeError(e); }
   r.sChecking = false; render();
   if (r.sRes) document.getElementById('rv-flip')?.focus(); else document.getElementById('rv-in')?.focus();
+}
+// a topic is chosen as soon as a sentence is expected on the current card
+function reviewTopic() {
+  const r = ui.rev; const w = r && words[r.queue[0]];
+  if (!w || r.topic || r.sRes || r.flipped) return;
+  if ((isHard(w) && !r.sSkip) || r.sOpen) pickTopic(w, r);
 }
 function gradeReview(g) {
   const r = ui.rev; const w = words[r.queue[0]]; if (!w) return;
@@ -1300,19 +1463,19 @@ function gradeReview(g) {
   r.queue.shift();
   if (g === 1) r.queue.push(w.id); else r.done++;
   Store.putWord(w);
-  Object.assign(r, { flipped: false, sOpen: false, sSkip: false, sRes: null, sInput: '', sErr: '' });
-  render(); prefetchCards(); updateBadge();
+  Object.assign(r, { flipped: false, sOpen: false, sSkip: false, sRes: null, sInput: '', sErr: '', topic: null });
+  render(); prefetchCards(); updateBadge(); reviewTopic();
 }
 
 /* ===== practice: own sentences ===== */
 const PRACTICE_N = 3;
-function checkPrompt(w, text) {
+function checkPrompt(w, text, topic) {
   return `You are an experienced, encouraging English teacher. A Russian-speaking learner (CEFR ${ui.level}) is practising the word "${w.word}"${w.pos ? ` (${w.pos})` : ''}${w.def ? `, meaning: ${w.def}` : ''}.
 Learner's sentence: """${text}"""
 Check grammar, spelling, word choice, collocations and whether it sounds natural to a native speaker. Check specifically whether "${w.word}" is used correctly and in this meaning. Do not invent errors: if the sentence is correct and natural, say so. Ignore a missing capital letter at the start and a missing final full stop.
 Reply with ONLY JSON:
 {"verdict":"correct|minor|wrong","word_ok":true,"word_note_ru":"one sentence in Russian about how the target word is used, or empty string if it is used well","corrected":"the sentence with the fewest changes needed to make it correct (identical to the learner's if correct)","natural":"how a native speaker would more naturally say it, or empty string if the corrected sentence already sounds natural","errors":[{"wrong":"fragment of the learner's sentence","right":"replacement","explain_ru":"short explanation in Russian"}],"comment_ru":"one short comment in Russian"}
-"minor" means small slips (an article, a preposition, spelling, punctuation) that do not hide the meaning. "wrong" means grammar or word-use errors, or the target word is missing or misused.`;
+"minor" means small slips (an article, a preposition, spelling, punctuation) that do not hide the meaning. "wrong" means grammar or word-use errors, or the target word is missing or misused.${grammarCheckPart(w, topic)}`;
 }
 function startPractice(id, extra) {
   const w = words[id]; if (!w) return;
@@ -1320,6 +1483,7 @@ function startPractice(id, extra) {
   ui.prac = { id, extra: !!extra, items: extra ? [] : null, input: '', checking: false, err: '', redo: false, showCard: true };
   ui.view = 'practice'; render(); scrollTo(0, 0);
   if (!hasCard(w) && AI.ready()) ensureCard(w).then(() => { if (ui.view === 'practice') render(); }).catch(() => { });
+  if (pracItems().length < PRACTICE_N) pickTopic(w, ui.prac);
   setTimeout(() => document.getElementById('pr-in')?.focus(), 50);
 }
 const pracItems = () => { const p = ui.prac; const w = words[p.id]; return p.extra ? p.items : (w.practice?.items || (w.practice = { items: [] }).items); };
@@ -1344,6 +1508,7 @@ function resultHtml(it, wordText) {
   const changed = r.corrected && r.corrected.trim() !== it.text.trim();
   return `<div class="pres ${v[0]}">
     <p class="pverdict"><span class="vbadge ${v[0]}">${v[1]}</span>${r.comment_ru ? ` <span class="muted">${esc(r.comment_ru)}</span>` : ''}</p>
+    ${grammarResultHtml(it)}
     ${changed ? `<p class="clabel">Исправление</p><p class="pfix" lang="en">${tokenDiff(it.text, r.corrected)}</p>` : ''}
     ${r.errors?.length ? `<ul class="perr">${r.errors.map(e => `<li><span lang="en"><del>${esc(e.wrong)}</del> → <ins>${esc(e.right)}</ins></span> <span class="muted">${esc(e.explain_ru)}</span></li>`).join('')}</ul>` : ''}
     ${!r.word_ok || r.word_note_ru ? `<p class="pword ${r.word_ok ? '' : 'badtxt'}"><b>${esc(wordText || '')}:</b> ${esc(r.word_note_ru || 'слово употреблено неверно')}</p>` : ''}
@@ -1373,7 +1538,9 @@ function renderPractice() {
       <div class="row">${last.r.verdict !== 'correct' ? `<button class="btn" data-act="pr-redo">Исправить и проверить снова</button>` : ''}<span class="spacer"></span>
       <button class="btn primary" id="pr-next" data-act="pr-next">${n >= PRACTICE_N ? 'К итогам' : 'Следующее предложение'} ${I.next}</button></div></div>`;
   } else {
+    const redoTopic = p.redo && last?.topic ? { id: last.topic } : null;
     main = `<div class="pcur">
+      ${p.redo ? (redoTopic ? topicBoxHtml({ topic: redoTopic }, 'noop').replace(/<button[^>]*>Другая тема<\/button>/, '') : '') : topicBoxHtml(p, 'pr-topic')}
       <label class="clabel" for="pr-in">${p.redo ? `Исправьте предложение ${n}` : `Предложение ${n + 1} из ${PRACTICE_N}`}</label>
       <textarea id="pr-in" class="prin" rows="2" lang="en" spellcheck="false" autocapitalize="sentences" placeholder="Write a sentence with “${esc(w.word)}”…" ${p.checking ? 'disabled' : ''}>${esc(p.input)}</textarea>
       ${p.err ? `<p class="small err">${esc(p.err)}</p>` : ''}
@@ -1394,7 +1561,8 @@ function cleanCheck(r0, text) {
     verdict: ['correct', 'minor', 'wrong'].includes(r0?.verdict) ? r0.verdict : 'minor', word_ok: r0?.word_ok !== false,
     word_note_ru: String(r0?.word_note_ru || ''), corrected: String(r0?.corrected || text), natural: String(r0?.natural || ''),
     errors: (Array.isArray(r0?.errors) ? r0.errors : []).filter(e => e && (e.wrong || e.right)).map(e => ({ wrong: String(e.wrong || ''), right: String(e.right || ''), explain_ru: String(e.explain_ru || '') })).slice(0, 8),
-    comment_ru: String(r0?.comment_ru || '')
+    comment_ru: String(r0?.comment_ru || ''),
+    grammar_ok: typeof r0?.grammar_ok === 'boolean' ? r0.grammar_ok : null, grammar_note_ru: String(r0?.grammar_note_ru || ''), grammar_example: String(r0?.grammar_example || '')
   };
 }
 async function checkSentence() {
@@ -1403,8 +1571,10 @@ async function checkSentence() {
   if (countWords(text) < 3) { p.err = 'Напишите полное предложение.'; render(); return; }
   p.checking = true; p.err = ''; render();
   try {
-    const r = cleanCheck(await sampleFn.json(checkPrompt(w, text), {}), text);
-    const items = pracItems(); const it = { text, r, at: Date.now() };
+    const items = pracItems();
+    const topic = p.redo ? (items[items.length - 1]?.topic ? { id: items[items.length - 1].topic } : null) : p.topic;
+    const r = cleanCheck(await sampleFn.json(checkPrompt(w, text, topic?.loading ? null : topic), {}), text);
+    const it = { text, r, at: Date.now(), topic: topic && !topic.loading ? topic.id : undefined };
     if (p.redo) items[items.length - 1] = it; else items.push(it);
     p.input = ''; p.redo = false; p.justChecked = true;
     if (!p.extra) Store.putWord(w);
@@ -1415,7 +1585,7 @@ async function checkSentence() {
 function finishPractice() {
   const p = ui.prac; const w = words[p.id];
   const items = pracItems();
-  w.mySentences = [...(w.mySentences || []), ...items.map(it => sentRecord(it.text, it.r, it.at, p.extra ? 'extra' : 'new'))].slice(-40);
+  w.mySentences = [...(w.mySentences || []), ...items.map(it => sentRecord(it.text, it.r, it.at, p.extra ? 'extra' : 'new', it.topic))].slice(-40);
   if (!p.extra) { w.state = 'review'; w.fsrs = FSRS.next(null, 3); delete w.practice; }
   Store.putWord(w); ui.prac = null; ui.view = p.extra ? 'words' : 'today'; render(); updateBadge();
   toast(p.extra ? 'Предложения сохранены' : `«${w.word}» добавлено в повторение`);
@@ -1429,8 +1599,9 @@ function wordStatus(w) {
   return ['r', d <= 0 ? 'повторить сегодня' : `через ${ivlLabel(d)}`];
 }
 // compact copy of a checked sentence, kept in the word's history
-function sentRecord(text, r, at, kind) {
+function sentRecord(text, r, at, kind, topic) {
   return { text, corrected: r?.corrected || '', verdict: r?.verdict || '', at: at || Date.now(), kind,
+    ...(topic ? { topic, grammar_ok: r?.grammar_ok ?? null, grammar_note: r?.grammar_note_ru || '', grammar_example: r?.grammar_example || '' } : {}),
     errors: (r?.errors || []).slice(0, 6), natural: r?.natural || '', note: r && (!r.word_ok || r.word_note_ru) ? (r.word_note_ru || 'слово употреблено неверно') : '' };
 }
 function wordsTabs() {
@@ -1442,7 +1613,7 @@ function allSentences() {
   const out = [];
   for (const w of liveWords()) {
     for (const x of w.mySentences || []) out.push({ ...x, word: w.word, wid: w.id });
-    for (const it of w.practice?.items || []) out.push({ ...sentRecord(it.text, it.r, it.at, 'new'), word: w.word, wid: w.id });
+    for (const it of w.practice?.items || []) out.push({ ...sentRecord(it.text, it.r, it.at, 'new', it.topic), word: w.word, wid: w.id });
   }
   return out.sort((a, b) => (b.at || 0) - (a.at || 0));
 }
@@ -1459,13 +1630,14 @@ function renderHistory() {
   for (const x of list) {
     const d = dayLabel(x.at); if (d !== lastDay) { html += `<p class="hday">${esc(d)}</p>`; lastDay = d; }
     const changed = x.corrected && x.corrected.trim() !== x.text.trim();
-    const more = x.errors?.length || x.natural || x.note;
+    const more = x.errors?.length || x.natural || x.note || (x.topic && x.grammar_ok != null);
     html += `<details class="hrow ${vc(x.verdict)}"${more ? '' : ' data-empty'}>
       <summary><span class="vdot ${vc(x.verdict)}" title="${vt(x.verdict)}"></span>
-        <span class="hbody"><span class="hword">${esc(x.word)}</span><span class="htext" lang="en">${esc(x.text)}</span>
+        <span class="hbody"><span class="hword">${esc(x.word)}${x.topic && TOPIC[x.topic] ? ` <span class="htopic ${x.grammar_ok === false ? 'bad' : x.grammar_ok ? 'ok' : ''}">${esc(TOPIC[x.topic].en)}</span>` : ''}</span><span class="htext" lang="en">${esc(x.text)}</span>
         ${changed ? `<span class="hfix" lang="en">${tokenDiff(x.text, x.corrected)}</span>` : ''}</span>
         <span class="htime tabnum">${new Date(x.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span></summary>
       ${more ? `<div class="hmore">
+        ${grammarResultHtml(x)}
         ${x.errors?.length ? `<ul class="perr">${x.errors.map(e => `<li><span lang="en"><del>${esc(e.wrong)}</del> → <ins>${esc(e.right)}</ins></span> <span class="muted">${esc(e.explain_ru)}</span></li>`).join('')}</ul>` : ''}
         ${x.note ? `<p class="pword"><b>${esc(x.word)}:</b> ${esc(x.note)}</p>` : ''}
         ${x.natural && x.natural.trim() !== (x.corrected || x.text).trim() ? `<p class="clabel">Как сказал бы носитель</p><p class="pnat" lang="en">${esc(x.natural)}</p>` : ''}
@@ -1586,6 +1758,7 @@ function renderSettings() {
       <div class="row"><label for="s-new">Новых слов</label><input id="s-new" class="numin" type="number" min="0" max="20" value="${settings.newPerDay}"><label for="s-rev">Повторений</label><input id="s-rev" class="numin" type="number" min="0" max="300" value="${settings.reviewsPerDay}"></div>
       <p class="small muted">Каждое новое слово — это 3 своих предложения. При повторении трудных слов нужно написать одно предложение, для остальных — по желанию. Повторения сверх лимита переносятся на следующий день. День начинается в 4:00.</p>
     </section>
+    ${renderTopicSettings()}
     <section class="sset">
       <h2>Озвучка</h2>
       ${TTS.ok && voices.length ? `<div class="row">${voiceSelect()}${rateSeg('rate')}<button class="btn sm" data-act="say" data-text="This is how your sentences will sound.">${I.spk} Проверить</button></div>`
@@ -1637,7 +1810,10 @@ function wordsAct(name, a) {
   switch (name) {
     case 'rv-start': startReview(); return true;
     case 'rv-flip': if (ui.rev) { ui.rev.flipped = true; render(); } return true;
-    case 'rv-open': ui.rev.sOpen = true; render(); document.getElementById('rv-in')?.focus(); return true;
+    case 'rv-open': ui.rev.sOpen = true; render(); reviewTopic(); document.getElementById('rv-in')?.focus(); return true;
+    case 'rv-topic': { const w = words[ui.rev.queue[0]]; const cur = ui.rev.topic?.id; ui.rev.topic = null; pickTopic(w, ui.rev, cur ? [cur] : []); return true; }
+    case 'pr-topic': { const w = words[ui.prac.id]; const cur = ui.prac.topic?.id; pickTopic(w, ui.prac, cur ? [cur] : []); return true; }
+    case 'tp-all': settings.topicsOff = a.dataset.v === '1' ? [] : TOPICS.map(t => t[0]); saveSettings(); render(); return true;
     case 'rv-skip': ui.rev.sOpen = false; ui.rev.sSkip = true; render(); return true;
     case 'rv-check': checkReviewSentence(); return true;
     case 'rv-grade': gradeReview(+a.dataset.g); return true;
@@ -1645,7 +1821,7 @@ function wordsAct(name, a) {
     case 'rv-say': { const w = words[ui.rev?.queue[0]]; if (w?.examples) { TTS.stop(); w.examples.forEach(s => TTS.speak(plainSent(s), { rate: TTS.rate })); } return true; }
     case 'pr-start': startPractice(a.dataset.id, !!a.dataset.extra); return true;
     case 'pr-check': checkSentence(); return true;
-    case 'pr-next': ui.prac.justChecked = false; render(); document.getElementById('pr-in')?.focus(); return true;
+    case 'pr-next': { ui.prac.justChecked = false; render(); document.getElementById('pr-in')?.focus(); if (pracItems().length < PRACTICE_N) pickTopic(words[ui.prac.id], ui.prac); return true; }
     case 'pr-redo': { const items = pracItems(); ui.prac.redo = true; ui.prac.justChecked = false; ui.prac.input = items[items.length - 1].text; render(); const t = document.getElementById('pr-in'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } return true; }
     case 'pr-cancelredo': ui.prac.redo = false; ui.prac.input = ''; ui.prac.justChecked = true; render(); return true;
     case 'pr-card': ui.prac.showCard = !ui.prac.showCard; render(); return true;
