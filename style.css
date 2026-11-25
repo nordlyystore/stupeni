@@ -367,3 +367,21 @@ textarea{min-height:240px}
 .htime{font-size:12px;color:var(--muted);flex:none}
 .hmore{padding:6px 0 4px 19px}
 .hmore p{margin:0 0 6px}
+/* grammar topic */
+.topic{background:color-mix(in srgb,var(--accent) 8%,var(--surface));border:1px solid color-mix(in srgb,var(--accent) 25%,var(--line));border-radius:12px;padding:10px 14px;margin-bottom:12px}
+.topic p{margin:0 0 4px}
+.trow{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.trow .clabel{margin:0!important}
+.tname{font-size:17px;font-weight:600}
+.tpat{font-family:ui-monospace,'SFMono-Regular',Menlo,monospace;font-size:13.5px;background:var(--surface);border-radius:6px;padding:4px 8px;display:inline-block}
+.pgram{border-radius:8px;padding:8px 12px;margin:6px 0 8px;background:var(--sunk)}
+.pgram.ok{background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.pgram.bad{background:color-mix(in srgb,var(--warn) 14%,transparent)}
+.pgram p{margin:0 0 4px}
+.htopic{font-weight:500;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:0 7px;margin-left:4px}
+.htopic.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,var(--line))}
+.htopic.bad{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,var(--line))}
+.tgl{display:flex!important;gap:8px;align-items:baseline;font-size:14px!important;font-weight:400!important;margin:6px 0!important;cursor:pointer}
+.tgroup{border-top:1px solid var(--line);padding:8px 0}
+.tgroup summary{cursor:pointer}
+.tlist{padding:4px 0 4px 4px}
