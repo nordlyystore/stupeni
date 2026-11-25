@@ -1223,7 +1223,8 @@ function topicPrompt(w, cands) {
   return `A Russian-speaking learner of English (CEFR ${ui.level}) will write one sentence with the word "${w.word}"${w.pos ? ` (${w.pos})` : ''}${w.def ? `, meaning: ${w.def}` : ''}, using a grammar construction.
 Choose ONE topic from this list that combines naturally with this word:
 ${cands.map(id => `${id}: ${TOPIC[id].en} (${TOPIC[id].pattern})`).join('\n')}
-Reply with ONLY JSON: {"id":"topic id from the list","tip_ru":"1-2 short sentences in Russian: how to build this construction","example":"one natural example sentence of this construction that does NOT use the word ${w.word}"}`;
+Reply with ONLY JSON: {"id":"topic id from the list","tip_ru":"1-2 short sentences in Russian: how to build this construction","example":"one natural example sentence IN ENGLISH (never Russian) showing this construction, without the word ${w.word}"}
+The tip is in Russian, the example is always in English. No markdown or backticks.`;
 }
 // pick a topic: 8 random candidates (skipping recently used ones), the fast model chooses the one that fits the word
 async function pickTopic(w, holder, exclude = []) {
@@ -1233,29 +1234,38 @@ async function pickTopic(w, holder, exclude = []) {
   if (!pool.length) pool = enabledTopics();
   const cands = shuffle(pool).slice(0, 8);
   const token = (holder.topicToken = (holder.topicToken || 0) + 1);
-  holder.topic = { id: cands[0], loading: true };
+  holder.topic = { id: cands[0], loading: true }; holder.topicOpen = false;
   render();
   let t = { id: cands[0], tip: '', example: '' };
   if (AI.ready()) {
     try {
       const r = await sampleFn.json(topicPrompt(w, cands), { modelTier: 'quick' });
-      if (r && TOPIC[r.id] && cands.includes(r.id)) t = { id: r.id, tip: String(r.tip_ru || ''), example: String(r.example || '') };
+      if (r && TOPIC[r.id] && cands.includes(r.id)) {
+        const ex = String(r.example || '').replace(/[`*]/g, '').trim();
+        t = { id: r.id, tip: String(r.tip_ru || '').replace(/[`*]/g, '').trim(), example: /[а-яё]/i.test(ex) ? '' : ex };
+      }
     } catch { }
   }
   if (holder.topicToken !== token) return;
   holder.topic = t; render();
 }
-function topicBoxHtml(holder, act) {
+// collapsed by default: only the topic name; the rule opens on a button
+function topicBoxHtml(holder, act, key) {
   const t = holder.topic; if (!t) return '';
   const d = TOPIC[t.id];
   if (t.loading) return `<div class="topic"><p class="small muted"><span class="spinner sm"></span> Подбираю грамматическую тему…</p></div>`;
+  const open = !!holder.topicOpen;
   return `<div class="topic">
-    <div class="trow"><span class="clabel">Грамматика · ${d.level}</span><button class="btn ghost sm" data-act="${act}">Другая тема</button></div>
-    <p class="tname"><span lang="en">${esc(d.en)}</span> <span class="muted">· ${esc(d.ru)}</span></p>
-    <p class="tpat" lang="en">${esc(d.pattern)}</p>
-    ${t.tip ? `<p class="small">${esc(t.tip)}</p>` : ''}
-    ${t.example ? `<p class="small muted">Пример: <i lang="en">${esc(t.example)}</i></p>` : ''}
-    <p class="small muted">Не получается по теме — напишите любое предложение со словом, и я покажу, как построить его в этой конструкции.</p>
+    <div class="trow"><span class="clabel">Грамматика · ${d.level}</span>${act ? `<button class="btn ghost sm" data-act="${act}">Другая тема</button>` : ''}</div>
+    <p class="tname"><span lang="en">${esc(d.en)}</span></p>
+    ${key ? `<button class="btn ghost sm trule" data-act="tp-rule" data-h="${key}" aria-expanded="${open}">${open ? 'Скрыть правило' : 'Показать правило'}</button>` : ''}
+    ${open || !key ? `<div class="tbody">
+      <p class="small muted">${esc(d.ru)}</p>
+      <p class="tpat" lang="en">${esc(d.pattern)}</p>
+      ${t.tip ? `<p class="small">${esc(t.tip)}</p>` : ''}
+      ${t.example ? `<p class="small muted">Example: <i lang="en">${esc(t.example)}</i></p>` : ''}
+      <p class="small muted">Не получается по теме — напишите любое предложение со словом, и я покажу, как построить его в этой конструкции.</p>
+    </div>` : ''}
   </div>`;
 }
 function grammarCheckPart(w, topic) {
@@ -1411,7 +1421,7 @@ function renderReview() {
   if (r.sRes) sent = `<div class="rvsent"><p class="clabel">Моё предложение</p><p class="ptext" lang="en">${esc(r.sRes.text)}</p>${resultHtml(r.sRes, w.word)}</div>`;
   else if (wantSent && !r.flipped) sent = `<div class="rvsent">
       ${hard ? `<p class="hardnote">Это слово пока плохо запоминается. Напишите с ним одно предложение, потом откройте ответ.</p>` : ''}
-      ${topicBoxHtml(r, 'rv-topic')}
+      ${topicBoxHtml(r, 'rv-topic', 'rev')}
       <label class="clabel" for="rv-in">Своё предложение со словом</label>
       <textarea id="rv-in" class="prin" rows="2" lang="en" spellcheck="false" autocapitalize="sentences" ${r.sChecking ? 'disabled' : ''}>${esc(r.sInput || '')}</textarea>
       ${r.sErr ? `<p class="small err">${esc(r.sErr)}</p>` : ''}
@@ -1540,7 +1550,7 @@ function renderPractice() {
   } else {
     const redoTopic = p.redo && last?.topic ? { id: last.topic } : null;
     main = `<div class="pcur">
-      ${p.redo ? (redoTopic ? topicBoxHtml({ topic: redoTopic }, 'noop').replace(/<button[^>]*>Другая тема<\/button>/, '') : '') : topicBoxHtml(p, 'pr-topic')}
+      ${p.redo ? (redoTopic ? topicBoxHtml({ topic: redoTopic, topicOpen: p.topicOpen }, '', 'prac') : '') : topicBoxHtml(p, 'pr-topic', 'prac')}
       <label class="clabel" for="pr-in">${p.redo ? `Исправьте предложение ${n}` : `Предложение ${n + 1} из ${PRACTICE_N}`}</label>
       <textarea id="pr-in" class="prin" rows="2" lang="en" spellcheck="false" autocapitalize="sentences" placeholder="Write a sentence with “${esc(w.word)}”…" ${p.checking ? 'disabled' : ''}>${esc(p.input)}</textarea>
       ${p.err ? `<p class="small err">${esc(p.err)}</p>` : ''}
@@ -1813,6 +1823,7 @@ function wordsAct(name, a) {
     case 'rv-open': ui.rev.sOpen = true; render(); reviewTopic(); document.getElementById('rv-in')?.focus(); return true;
     case 'rv-topic': { const w = words[ui.rev.queue[0]]; const cur = ui.rev.topic?.id; ui.rev.topic = null; pickTopic(w, ui.rev, cur ? [cur] : []); return true; }
     case 'pr-topic': { const w = words[ui.prac.id]; const cur = ui.prac.topic?.id; pickTopic(w, ui.prac, cur ? [cur] : []); return true; }
+    case 'tp-rule': { const h = a.dataset.h === 'rev' ? ui.rev : ui.prac; if (h) { h.topicOpen = !h.topicOpen; render(); } return true; }
     case 'tp-all': settings.topicsOff = a.dataset.v === '1' ? [] : TOPICS.map(t => t[0]); saveSettings(); render(); return true;
     case 'rv-skip': ui.rev.sOpen = false; ui.rev.sSkip = true; render(); return true;
     case 'rv-check': checkReviewSentence(); return true;
